@@ -158,6 +158,12 @@ namespace DevCmdLine
         }
     }
 
+    [AttributeUsage(AttributeTargets.Method)]
+    public class DevCmdFunctionAttribute : Attribute
+    {
+        
+    }
+
     [Flags]
     public enum DevCmdCompleteFlags
     {

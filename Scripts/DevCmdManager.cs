@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -173,6 +174,7 @@ namespace DevCmdLine
 
         #region Private
         private static Dictionary<string, DevCmdInfo> _commands = new Dictionary<string, DevCmdInfo>();
+        private static Dictionary<string, List<DevFuncInfo>> _functions = new Dictionary<string, List<DevFuncInfo>>();
 
         private static Dictionary<string, Trie> _cmdArgTries = new Dictionary<string, Trie>();
         private static Dictionary<CmdArgKey, CompleteInfo> _completes = new Dictionary<CmdArgKey, CompleteInfo>();
@@ -213,6 +215,12 @@ namespace DevCmdLine
             public string description;
             public string[] regexPatterns;
             public string[] argNames;
+        }
+
+        private struct DevFuncInfo
+        {
+            public MethodInfo methodInfo;
+            public ParameterInfo[] parameterInfos;
         }
 
         private struct ArgInfo
@@ -774,6 +782,23 @@ namespace DevCmdLine
                         }
                     }
 
+                    DevCmdFunctionAttribute funcAttr = method.GetCustomAttribute<DevCmdFunctionAttribute>();
+
+                    if (funcAttr != null)
+                    {
+                        string funcName = $"{type.FullName}.{method.Name}";
+
+                        if (!_functions.ContainsKey(funcName))
+                        {
+                            _functions[funcName] = new List<DevFuncInfo>();
+                        }
+                        
+                        DevFuncInfo func = default;
+                        func.methodInfo = method;
+                        func.parameterInfos = method.GetParameters();
+                        _functions[funcName].Add(func);
+                    }
+
                     IEnumerable<DevCmdCompleteFunctionAttribute> compAttrs =
                         method.GetCustomAttributes<DevCmdCompleteFunctionAttribute>();
 
@@ -883,6 +908,106 @@ Usage:
             DevCmdConsole.ClearConsole();
         }
 
+        [DevCmd(
+            "func",
+            @"Invokes the static function supplied.
+
+Usage:
+    func 
+        Lists all possible functions.    
+
+    func <namespace.class.function> [<arg_1> ... <arg_n>]
+        Invokes the function for the supplied class with the supplied arguments.")]
+        private static void DevCmdFunc(DevCmdArg[] args)
+        {
+            if (args.Length == 0)
+            {
+                List<string> names = new List<string>();
+                names.AddRange(_functions.Keys);
+                names.Sort();
+
+                string msg = "";
+
+                for (int i = 0; i < names.Count; i++)
+                {
+                    msg += $"{names[i]}\n";
+                }
+                
+                Debug.Log(msg);
+                return;
+            }
+
+            string[] argsList = args[0].values;
+            string funcName = argsList[0];
+
+            if (_functions.TryGetValue(funcName, out List<DevFuncInfo> funcs))
+            {
+                MethodInfo method = null;
+                List<object> funcArgs = new List<object>();
+
+                for (int i = 0; i < funcs.Count; i++)
+                {
+                    DevFuncInfo info = funcs[i];
+
+                    if (argsList.Length - 1 <= info.parameterInfos.Length)
+                    {
+                        method = info.methodInfo;
+                        funcArgs.Clear();
+                        
+                        for (int j = 0; j < info.parameterInfos.Length; j++)
+                        {
+                            ParameterInfo paramInfo = info.parameterInfos[j];
+
+                            if (argsList.Length > j + 1)
+                            {
+                                TypeConverter converter = TypeDescriptor.GetConverter(paramInfo.ParameterType);
+
+                                if (converter.CanConvertFrom(typeof(string)))
+                                {
+                                    funcArgs.Add(converter.ConvertFromString(argsList[j + 1]));
+                                }
+                                else
+                                {
+                                    method = null;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                if (paramInfo.HasDefaultValue)
+                                {
+                                    funcArgs.Add(paramInfo.DefaultValue);
+                                }
+                                else
+                                {
+                                    method = null;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (method != null)
+                    {
+                        break;
+                    }
+                }
+
+                if (method != null)
+                {
+                    method.Invoke(null, funcArgs.ToArray());
+                }
+                else
+                {
+                    Debug.LogWarning($"Could not find a valid function!");
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"Function not found! ({funcName})");
+            }
+        }
+
         [DevCmdCompleteFunction("help", "", DevCmdCompleteFlags.Default)]
         private static string[] DevCmdHelpComplete()
         {
@@ -895,6 +1020,20 @@ Usage:
 
             return cmds.ToArray();
         }
+        
+        [DevCmdCompleteFunction("func", "", DevCmdCompleteFlags.Default)]
+        private static string[] DevCmdFuncComplete()
+        {
+            List<string> funcs = new List<string>();
+
+            foreach (string name in _functions.Keys)
+            {
+                funcs.Add(name);
+            }
+
+            return funcs.ToArray();
+        }
+
         #endregion
     }
 
